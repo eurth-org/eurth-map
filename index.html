@@ -9,9 +9,13 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
-    <!-- 2. Leaflet.PolylineMeasure Plugin (For visual A->B->C lines & unit switching) -->
+    <!-- 2. Leaflet.PolylineMeasure Plugin -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.polylinemeasure@3.0.0/Leaflet.PolylineMeasure.css" />
     <script src="https://cdn.jsdelivr.net/npm/leaflet.polylinemeasure@3.0.0/Leaflet.PolylineMeasure.js"></script>
+
+    <!-- 3. Leaflet-MiniMap Plugin -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet-minimap/3.6.1/Control.MiniMap.min.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet-minimap/3.6.1/Control.MiniMap.min.js"></script>
     
     <style>
       html, body, #map { 
@@ -28,23 +32,83 @@
     <div id="map"></div>
     
     <script>
-      // Initialize the Leaflet Map
+      // ==========================================
+      // 1. INITIALIZE THE MAP
+      // ==========================================
       var map = L.map('map', {
           crs: L.CRS.EPSG4326,
           center: [0, 0],
           zoom: 1,
           minZoom: 0,
-          maxZoom: 3,
-          worldCopyJump: false // <--- TURN THIS OFF!
+          maxZoom: 3, // I bumped this to 5 for your new GDAL tiles!
+          worldCopyJump: false 
       });
 
-      // Load your working .jpg tiles
-      L.tileLayer('{z}/{x}/{y}.png', {
-          noWrap: false, // This will ensure the tiles still repeat endlessly
+      // The Main Base Map
+      var baseMap = L.tileLayer('{z}/{x}/{y}.png', {
+          noWrap: false, 
           attribution: '<a href="https://eurth.org/map?ref=eurth.org">Eurth.org</a>'
+      });
+      baseMap.addTo(map);
+
+
+      // ==========================================
+      // 2. CREATE THE THEMATIC OVERLAYS
+      // ==========================================
+      // This function creates 3 copies of your image so it wraps seamlessly East/West!
+      function createWrappingOverlay(url) {
+          return L.layerGroup([
+              L.imageOverlay(url, [[-90, -540], [90, -180]], {opacity: 0.5}), // West Copy
+              L.imageOverlay(url, [[-90, -180], [90, 180]],  {opacity: 0.5}),  // Center Main
+              L.imageOverlay(url, [[-90, 180],  [90, 540]],  {opacity: 0.5})   // East Copy
+          ]);
+      }
+
+      var climateLayer = createWrappingOverlay('./Climate_of_Eurth.png');
+      var tectonicLayer = createWrappingOverlay('./Tectonic_plates_of_Eurth.png');
+      var oceanLayer = createWrappingOverlay('./Ocean_currents_of_Eurth.png');
+
+      // ==========================================
+      // 3. CREATE THE CARTOGRAPHIC GRID
+      // ==========================================
+      var grid = L.layerGroup();
+      // Draw Longitude Lines (Meridians) wrapping East/West
+      for (var lon = -540; lon <= 540; lon += 30) {
+          L.polyline([[-90, lon], [90, lon]], {color: 'white', weight: 1, opacity: 0.4, dashArray: '5, 5', interactive: false}).addTo(grid);
+      }
+      // Draw Latitude Lines (Parallels) wrapping East/West
+      for (var lat = -90; lat <= 90; lat += 30) {
+          L.polyline([[lat, -540], [lat, 540]], {color: 'white', weight: 1, opacity: 0.4, dashArray: '5, 5', interactive: false}).addTo(grid);
+      }
+
+
+      // ==========================================
+      // 4. ADD THE UI CONTROLS 
+      // ==========================================
+      
+      // A. The Layers Menu (Top Right)
+      var baseMaps = {
+          "Eurth Base Map": baseMap
+      };
+      var overlayMaps = {
+          "Cartographic Grid": grid,
+          "Climate Zones": climateLayer,
+          "Tectonic Plates": tectonicLayer,
+          "Ocean Currents": oceanLayer
+      };
+      L.control.layers(baseMaps, overlayMaps, { position: 'topright' }).addTo(map);
+
+      // B. The Minimap (Bottom Right)
+      // It reuses your base map tiles, but forces it to stay zoomed out.
+      var miniMapLayer = L.tileLayer('{z}/{x}/{y}.png', { minZoom: 0, maxZoom: 1 });
+      var miniMap = new L.Control.MiniMap(miniMapLayer, {
+          toggleDisplay: true,
+          minimized: false,
+          position: 'bottomright',
+          zoomLevelFixed: 0
       }).addTo(map);
 
-      // Add the visual Measurement Plugin
+      // C. The Measurement Tool (Top Left)
       L.control.polylineMeasure({
           position: 'topleft',
           unit: 'metres',
@@ -52,6 +116,29 @@
           showClearControl: true,
           clearMeasurementsOnStop: false
       }).addTo(map);
+
+
+      // ==========================================
+      // 5. THE VERTICAL LOCK SCRIPT
+      // ==========================================
+      map.on('moveend', function() {
+          var bounds = map.getBounds();
+          var center = map.getCenter();
+          var latSpan = bounds.getNorth() - bounds.getSouth();
+          
+          var maxLat = 90 - (latSpan / 2);
+          var minLat = -90 + (latSpan / 2);
+
+          if (latSpan >= 180) {
+              maxLat = 0;
+              minLat = 0;
+          }
+
+          if (center.lat > maxLat + 0.01 || center.lat < minLat - 0.01) {
+              var clampedLat = Math.max(minLat, Math.min(maxLat, center.lat));
+              map.panTo([clampedLat, center.lng], { animate: true, duration: 0.3 });
+          }
+      });
     </script>
     
   </body>
